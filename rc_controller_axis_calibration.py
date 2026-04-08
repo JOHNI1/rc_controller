@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import glob
 import json
+import os
+import select
 import struct
 import sys
 import threading
@@ -29,7 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-CALIBRATION_FILE = "rc_controller_axis_calibration.json"
+BASE_DIR = Path(__file__).resolve().parent
+CALIBRATION_FILE = BASE_DIR / "rc_controller_axis_calibration.json"
 
 INPUT_DURATION_SEC = 2.5
 CENTER_DURATION_SEC = 1.5
@@ -74,7 +77,14 @@ def probe_joystick(path: str) -> Tuple[bool, str]:
             pass
         return True, "OK"
     except PermissionError:
-        return False, f"Permission denied. Try: sudo chmod a+r {path}"
+        return (
+            False,
+            (
+                "Permission denied. Add your user to the appropriate input group "
+                "or install a udev rule. Temporary workaround: "
+                f"sudo chmod a+r {path}"
+            ),
+        )
     except FileNotFoundError:
         return False, "Device not found."
     except OSError as exc:
@@ -86,6 +96,7 @@ class JsReader(threading.Thread):
         super().__init__(daemon=True)
         self.path = path
         self.running = True
+        self._fd: Optional[int] = None
         self._lock = threading.Lock()
         self._axes: Dict[int, int] = {}
 
@@ -95,22 +106,59 @@ class JsReader(threading.Thread):
 
     def stop(self) -> None:
         self.running = False
+        fd = self._fd
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            finally:
+                self._fd = None
 
     def run(self) -> None:
         try:
-            with open(self.path, "rb", buffering=0) as f:
-                while self.running:
-                    raw = f.read(8)
-                    if len(raw) != 8:
-                        continue
-                    _, value, etype, number = struct.unpack("IhBB", raw)
-                    if etype & JS_EVENT_INIT:
-                        etype &= ~JS_EVENT_INIT
-                    if etype == JS_EVENT_AXIS:
-                        with self._lock:
-                            self._axes[number] = value
+            fd = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
+            self._fd = fd
+
+            while self.running:
+                try:
+                    ready, _, _ = select.select([fd], [], [], 0.1)
+                except (OSError, ValueError):
+                    break
+
+                if not ready:
+                    continue
+
+                try:
+                    raw = os.read(fd, 8)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    break
+
+                if len(raw) != 8:
+                    continue
+
+                _, value, etype, number = struct.unpack("<IhBB", raw)
+
+                if etype & JS_EVENT_INIT:
+                    etype &= ~JS_EVENT_INIT
+
+                if etype == JS_EVENT_AXIS:
+                    with self._lock:
+                        self._axes[number] = value
+
         except Exception:
+            pass
+        finally:
             self.running = False
+            fd = self._fd
+            self._fd = None
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
 
 @dataclass
@@ -376,11 +424,26 @@ class App(tk.Tk):
         self._right_guide = [0.5, 0.5]
         self._extra_input_name: Optional[str] = None
 
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
         if initial_device:
             self._selected = initial_device
             self._show_direct_start_screen(initial_device)
         else:
             self._show_device_screen()
+
+    def _stop_reader(self) -> None:
+        reader = self.reader
+        if reader is None:
+            return
+        self.reader = None
+        reader.stop()
+        if reader.is_alive():
+            reader.join(timeout=1.0)
+
+    def _on_close(self) -> None:
+        self._stop_reader()
+        self.destroy()
 
     def _show_direct_start_screen(self, dev: str) -> None:
         self._clear()
@@ -523,10 +586,20 @@ class App(tk.Tk):
     def _on_start(self) -> None:
         if not self._selected:
             return
+
+        self._stop_reader()
+
         self.js_path = self._selected
         self.reader = JsReader(self.js_path)
         self.reader.start()
         time.sleep(0.25)
+
+        if not self.reader.is_alive():
+            self._status_var.set(f"✗  Failed to start joystick reader for {self.js_path}")
+            self._status_lbl.configure(fg=DANGER)
+            self._stop_reader()
+            return
+
         self._step_idx = 0
         self._show_calib_screen()
 
@@ -935,9 +1008,7 @@ class App(tk.Tk):
         ).pack(side="left", padx=10)
 
     def _finish(self) -> None:
-        if self.reader:
-            self.reader.stop()
-            self.reader = None
+        self._stop_reader()
 
         calib = self.builder.build()
         out = Path(CALIBRATION_FILE)
@@ -1005,7 +1076,7 @@ class App(tk.Tk):
             padx=24,
             pady=10,
             cursor="hand2",
-            command=self.destroy,
+            command=self._on_close,
         ).pack(pady=24)
 
     def _clear(self) -> None:

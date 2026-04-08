@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import glob
 import json
+import os
+import select
 import struct
 import sys
 import threading
@@ -22,8 +24,9 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-MAPPING_FILE = "rc_controller_channel_function_mapping.yaml"
-CALIBRATION_FILE = "rc_controller_axis_calibration.json"
+BASE_DIR = Path(__file__).resolve().parent
+MAPPING_FILE = BASE_DIR / "rc_controller_channel_function_mapping.yaml"
+CALIBRATION_FILE = BASE_DIR / "rc_controller_axis_calibration.json"
 CHANNEL_COUNT_LIMIT = 16
 
 JS_EVENT_BUTTON = 0x01
@@ -260,6 +263,7 @@ class JsReader(threading.Thread):
         super().__init__(daemon=True)
         self.path = path
         self.running = True
+        self._fd: Optional[int] = None
         self._lock = threading.Lock()
         self._axes: Dict[int, int] = {}
         self._buttons: Dict[int, int] = {}
@@ -270,26 +274,61 @@ class JsReader(threading.Thread):
 
     def stop(self) -> None:
         self.running = False
+        fd = self._fd
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            finally:
+                self._fd = None
 
     def run(self) -> None:
         try:
-            with open(self.path, "rb", buffering=0) as f:
-                while self.running:
-                    raw = f.read(8)
-                    if len(raw) != 8:
-                        continue
-                    _, value, etype, number = struct.unpack("IhBB", raw)
-                    if etype & JS_EVENT_INIT:
-                        etype &= ~JS_EVENT_INIT
+            fd = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
+            self._fd = fd
 
-                    with self._lock:
-                        if etype == JS_EVENT_AXIS:
-                            self._axes[number] = value
-                        elif etype == JS_EVENT_BUTTON:
-                            self._buttons[number] = 1 if value else 0
+            while self.running:
+                try:
+                    ready, _, _ = select.select([fd], [], [], 0.1)
+                except (OSError, ValueError):
+                    break
+
+                if not ready:
+                    continue
+
+                try:
+                    raw = os.read(fd, 8)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    break
+
+                if len(raw) != 8:
+                    continue
+
+                _, value, etype, number = struct.unpack("<IhBB", raw)
+
+                if etype & JS_EVENT_INIT:
+                    etype &= ~JS_EVENT_INIT
+
+                with self._lock:
+                    if etype == JS_EVENT_AXIS:
+                        self._axes[number] = value
+                    elif etype == JS_EVENT_BUTTON:
+                        self._buttons[number] = 1 if value else 0
+
         except Exception as exc:
             print(f"Joystick reader stopped: {exc}", file=sys.stderr)
+        finally:
             self.running = False
+            fd = self._fd
+            self._fd = None
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
 
 def apply_axis_mapping(joystick_value: int, calib: dict, rc_min: int, rc_max: int) -> int:
@@ -386,12 +425,20 @@ class RcJoystickController:
     def start(self) -> None:
         if self._started:
             return
+
         self.reader.start()
         time.sleep(0.25)
+
+        if not self.reader.is_alive():
+            raise RuntimeError(f"Joystick reader failed to start for {self.js_path}")
+
         self._started = True
 
     def stop(self) -> None:
         self.reader.stop()
+        if self.reader.is_alive():
+            self.reader.join(timeout=1.0)
+        self._started = False
 
     def get_channel_values(self) -> List[int]:
         axes, buttons = self.reader.snapshot()
