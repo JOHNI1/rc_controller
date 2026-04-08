@@ -2,8 +2,12 @@
 """
 RC channel function mapping tool.
 
+Supported usage:
+    python3 rc_controller_channel_function_mapping.py
+    python3 rc_controller_channel_function_mapping.py /dev/input/js0
+
 What it does:
-1) Lets the user select a local joystick device.
+1) Lets the user select a local joystick device, or uses sys.argv[1] if provided.
 2) Lets the user choose how many channels will be configured.
 3) Walks channel-by-channel through a mapping UI.
 4) Supports channel input type = axis or buttons.
@@ -137,14 +141,15 @@ def probe_joystick(path: str) -> Tuple[bool, str]:
 
 
 class App(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, initial_device: Optional[str] = None) -> None:
         super().__init__()
         self.title("RC Channel Function Mapping")
         self.configure(bg=BG)
         self.geometry("1120x760")
         self.minsize(1040, 700)
 
-        self.selected_device: Optional[str] = None
+        self.initial_device = initial_device
+        self.selected_device: Optional[str] = initial_device
         self.reader: Optional[JsReader] = None
         self.channel_count = 0
         self.channel_configs: List[ChannelConfig] = []
@@ -159,6 +164,7 @@ class App(tk.Tk):
     def _on_close(self) -> None:
         if self.reader:
             self.reader.stop()
+            self.reader = None
         self.destroy()
 
     def _clear(self) -> None:
@@ -174,7 +180,15 @@ class App(tk.Tk):
         frame.pack(fill="x", padx=padx, pady=pady)
         return frame
 
-    def _make_button(self, parent: tk.Widget, text: str, command, *, primary: bool = True, side: Optional[str] = None) -> tk.Button:
+    def _make_button(
+        self,
+        parent: tk.Widget,
+        text: str,
+        command,
+        *,
+        primary: bool = True,
+        side: Optional[str] = None,
+    ) -> tk.Button:
         button = tk.Button(
             parent,
             text=text,
@@ -206,7 +220,7 @@ class App(tk.Tk):
         left = tk.Frame(content, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
 
-        tk.Label(left, text="  AVAILABLE JOYSTICKS", font=FONT_HINT, fg=SUBTLE, bg=PANEL, anchor="w").pack(fill="x", padx=12, pady=(12, 4))
+        tk.Label(left, text="  SELECTED JOYSTICK", font=FONT_HINT, fg=SUBTLE, bg=PANEL, anchor="w").pack(fill="x", padx=12, pady=(12, 4))
         self._device_list_body = tk.Frame(left, bg=PANEL)
         self._device_list_body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self._dev_rows: Dict[str, tk.Frame] = {}
@@ -222,39 +236,86 @@ class App(tk.Tk):
         form.grid_columnconfigure(1, weight=1)
 
         tk.Label(form, text="Selected device", font=FONT_BODY, fg=TEXT, bg=PANEL, anchor="w").grid(row=0, column=0, sticky="w", pady=8)
-        self._selected_device_var = tk.StringVar(value="None")
+        self._selected_device_var = tk.StringVar(value=self.selected_device if self.selected_device else "None")
         tk.Label(form, textvariable=self._selected_device_var, font=FONT_MONO, fg=TEXT, bg=PANEL, anchor="w").grid(row=0, column=1, sticky="ew", pady=8)
-
+        
         tk.Label(form, text="Channel count", font=FONT_BODY, fg=TEXT, bg=PANEL, anchor="w").grid(row=1, column=0, sticky="w", pady=8)
         self._channel_count_var = tk.StringVar(value="0")
-        channel_count_entry = tk.Entry(form, textvariable=self._channel_count_var, font=FONT_BODY, bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat", width=12)
+        channel_count_entry = tk.Entry(
+            form,
+            textvariable=self._channel_count_var,
+            font=FONT_BODY,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief="flat",
+            width=12,
+        )
         channel_count_entry.grid(row=1, column=1, sticky="w", pady=8)
         channel_count_entry.bind("<KeyRelease>", lambda _e: self._refresh_start_button_state())
 
-        hint_text = (
-            "First select the joystick. Then enter the total number of channels you want in the profile.\n"
-            "The Start button becomes available only when both are valid."
-        )
-        tk.Label(right, text=hint_text, font=FONT_HINT, fg=SUBTLE, bg=PANEL, justify="left").pack(anchor="w", padx=18, pady=(6, 10))
+        valid_initial_device = False
+        if self.initial_device:
+            valid_initial_device, _ = probe_joystick(self.initial_device)
 
+        if valid_initial_device:
+            hint_text = "Enter the total number of channels you want in the profile."
+        else:
+            hint_text = (
+                "First select the joystick. Then enter the total number of channels you want in the profile.\n"
+                "The Start button becomes available only when both are valid."
+            )
+
+        tk.Label(right, text=hint_text, font=FONT_HINT, fg=SUBTLE, bg=PANEL, justify="left").pack(anchor="w", padx=18, pady=(6, 10))
+        
         self._device_status_var = tk.StringVar(value="")
-        self._device_status_lbl = tk.Label(right, textvariable=self._device_status_var, font=FONT_HINT, fg=SUBTLE, bg=PANEL, justify="left")
+        self._device_status_lbl = tk.Label(
+            right,
+            textvariable=self._device_status_var,
+            font=FONT_HINT,
+            fg=SUBTLE,
+            bg=PANEL,
+            justify="left",
+        )
         self._device_status_lbl.pack(anchor="w", padx=18, pady=(0, 12))
 
         bottom = tk.Frame(right, bg=PANEL)
         bottom.pack(fill="x", padx=18, pady=(4, 16))
-        self._refresh_devices_btn = self._make_button(bottom, "REFRESH DEVICES", self._refresh_devices, primary=False, side="left")
         self._start_btn = self._make_button(bottom, "START", self._start_mapping, primary=True, side="right")
         self._start_btn.configure(state="disabled")
+
+        if self.selected_device:
+            ok, msg = probe_joystick(self.selected_device)
+            self._device_status_var.set(("✓  " if ok else "✗  ") + msg)
+            self._device_status_lbl.configure(fg=SUCCESS if ok else DANGER)
+
+        self._refresh_start_button_state()
 
     def _render_device_list(self) -> None:
         for widget in self._device_list_body.winfo_children():
             widget.destroy()
         self._dev_rows.clear()
 
+        if self.initial_device is not None:
+            row = tk.Frame(self._device_list_body, bg=PANEL)
+            row.pack(fill="x", pady=2)
+            self._dev_rows[self.initial_device] = row
+
+            dot = tk.Label(row, text="◈", font=FONT_BODY, fg=TEXT, bg=PANEL)
+            name = tk.Label(row, text=self.initial_device, font=FONT_BODY, fg=TEXT, bg=PANEL, anchor="w")
+            dot.pack(side="left", padx=(8, 0), pady=8)
+            name.pack(side="left", padx=8, pady=8)
+            return
+
         devices = list_joystick_devices()
         if not devices:
-            tk.Label(self._device_list_body, text="No joystick devices found at /dev/input/js*", font=FONT_BODY, fg=DANGER, bg=PANEL).pack(anchor="w", padx=8, pady=8)
+            tk.Label(
+                self._device_list_body,
+                text="No joystick devices found at /dev/input/js*",
+                font=FONT_BODY,
+                fg=DANGER,
+                bg=PANEL,
+            ).pack(anchor="w", padx=8, pady=8)
             return
 
         for dev in devices:
@@ -281,14 +342,10 @@ class App(tk.Tk):
         for child in row.winfo_children():
             child.configure(bg=bg)
 
-    def _refresh_devices(self) -> None:
-        self._render_device_list()
-        if self.selected_device and self.selected_device not in self._dev_rows:
-            self.selected_device = None
-            self._selected_device_var.set("None")
-        self._refresh_start_button_state()
-
     def _select_device(self, dev: str) -> None:
+        if self.initial_device is not None:
+            return
+
         self.selected_device = dev
         self._selected_device_var.set(dev)
         for name, row in self._dev_rows.items():
@@ -335,6 +392,8 @@ class App(tk.Tk):
 
         if self.reader:
             self.reader.stop()
+            self.reader = None
+
         self.reader = JsReader(self.selected_device)
         self.reader.start()
         time.sleep(0.15)
@@ -377,15 +436,48 @@ class App(tk.Tk):
 
         tk.Label(form, text="Default value", font=FONT_BODY, fg=TEXT, bg=PANEL, anchor="w").grid(row=0, column=0, sticky="w", pady=8)
         self._default_value_var = tk.StringVar()
-        self._default_entry = tk.Entry(form, textvariable=self._default_value_var, font=FONT_BODY, bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat", width=14)
+        self._default_entry = tk.Entry(
+            form,
+            textvariable=self._default_value_var,
+            font=FONT_BODY,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief="flat",
+            width=14,
+        )
         self._default_entry.grid(row=0, column=1, sticky="w", pady=8)
 
         tk.Label(form, text="Channel type", font=FONT_BODY, fg=TEXT, bg=PANEL, anchor="w").grid(row=1, column=0, sticky="w", pady=8)
         self._input_type_var = tk.StringVar(value="axis")
         selector = tk.Frame(form, bg=PANEL)
         selector.grid(row=1, column=1, sticky="w", pady=8)
-        tk.Radiobutton(selector, text="axis", variable=self._input_type_var, value="axis", command=self._on_input_type_changed, font=FONT_BODY, fg=TEXT, bg=PANEL, selectcolor=BG, activebackground=PANEL, activeforeground=TEXT).pack(side="left", padx=(0, 10))
-        tk.Radiobutton(selector, text="buttons", variable=self._input_type_var, value="buttons", command=self._on_input_type_changed, font=FONT_BODY, fg=TEXT, bg=PANEL, selectcolor=BG, activebackground=PANEL, activeforeground=TEXT).pack(side="left")
+        tk.Radiobutton(
+            selector,
+            text="axis",
+            variable=self._input_type_var,
+            value="axis",
+            command=self._on_input_type_changed,
+            font=FONT_BODY,
+            fg=TEXT,
+            bg=PANEL,
+            selectcolor=BG,
+            activebackground=PANEL,
+            activeforeground=TEXT,
+        ).pack(side="left", padx=(0, 10))
+        tk.Radiobutton(
+            selector,
+            text="buttons",
+            variable=self._input_type_var,
+            value="buttons",
+            command=self._on_input_type_changed,
+            font=FONT_BODY,
+            fg=TEXT,
+            bg=PANEL,
+            selectcolor=BG,
+            activebackground=PANEL,
+            activeforeground=TEXT,
+        ).pack(side="left")
 
         self._input_error_var = tk.StringVar(value="")
         self._input_error_lbl = tk.Label(parent, textvariable=self._input_error_var, font=FONT_HINT, fg=WARNING, bg=PANEL, justify="left")
@@ -406,10 +498,28 @@ class App(tk.Tk):
         axis_range.pack(fill="x", pady=(12, 8))
         tk.Label(axis_range, text="Min value", font=FONT_BODY, fg=TEXT, bg=PANEL).grid(row=0, column=0, sticky="w", pady=4)
         self._axis_min_var = tk.StringVar()
-        tk.Entry(axis_range, textvariable=self._axis_min_var, width=12, font=FONT_BODY, bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat").grid(row=0, column=1, sticky="w", padx=(10, 20), pady=4)
+        tk.Entry(
+            axis_range,
+            textvariable=self._axis_min_var,
+            width=12,
+            font=FONT_BODY,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief="flat",
+        ).grid(row=0, column=1, sticky="w", padx=(10, 20), pady=4)
         tk.Label(axis_range, text="Max value", font=FONT_BODY, fg=TEXT, bg=PANEL).grid(row=0, column=2, sticky="w", pady=4)
         self._axis_max_var = tk.StringVar()
-        tk.Entry(axis_range, textvariable=self._axis_max_var, width=12, font=FONT_BODY, bg=BG, fg=TEXT, insertbackground=TEXT, relief="flat").grid(row=0, column=3, sticky="w", padx=(10, 0), pady=4)
+        tk.Entry(
+            axis_range,
+            textvariable=self._axis_max_var,
+            width=12,
+            font=FONT_BODY,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief="flat",
+        ).grid(row=0, column=3, sticky="w", padx=(10, 0), pady=4)
 
         self._axis_status_var = tk.StringVar(value="No axis assigned yet")
         tk.Label(self._axis_section, textvariable=self._axis_status_var, font=FONT_MONO, fg=TEXT, bg=PANEL, anchor="w", justify="left").pack(fill="x", pady=(6, 6))
@@ -819,32 +929,38 @@ class App(tk.Tk):
             tk.Label(table, text=header, width=width, font=FONT_MONO, fg=SUBTLE, bg=BORDER, pady=6).grid(row=0, column=col, sticky="nsew", padx=1, pady=1)
 
         for row_idx, config in enumerate(self.channel_configs, start=1):
-            detail = f"axis_number={config.axis_number}, min={config.axis_min}, max={config.axis_max}" if config.input_type == "axis" else ", ".join(
-                f"button_{button}->{value}" for button, value in sorted(config.buttons.items())
+            detail = (
+                f"axis_number={config.axis_number}, min={config.axis_min}, max={config.axis_max}"
+                if config.input_type == "axis"
+                else ", ".join(f"button_{button}->{value}" for button, value in sorted(config.buttons.items()))
             )
             values = [f"channel_{row_idx}", str(config.default_value), config.input_type, detail]
             for col_idx, (value, width) in enumerate(zip(values, widths)):
-                tk.Label(table, text=value, width=width, font=FONT_MONO, fg=TEXT, bg=PANEL, pady=5, anchor="w").grid(row=row_idx, column=col_idx, sticky="nsew", padx=1, pady=1)
+                tk.Label(
+                    table,
+                    text=value,
+                    width=width,
+                    font=FONT_MONO,
+                    fg=TEXT,
+                    bg=PANEL,
+                    pady=5,
+                    anchor="w",
+                ).grid(row=row_idx, column=col_idx, sticky="nsew", padx=1, pady=1)
 
         actions = tk.Frame(self, bg=BG)
-        actions.pack(pady=(6, 22))
-        self._make_button(actions, "CLOSE", self._on_close, primary=True, side="left")
-        self._make_button(actions, "CREATE ANOTHER PROFILE", self._restart, primary=False, side="left")
-
-    def _restart(self) -> None:
-        if self.reader:
-            self.reader.stop()
-            self.reader = None
-        self.selected_device = None
-        self.channel_count = 0
-        self.channel_configs = []
-        self.current_channel_idx = 0
-        self._show_start_screen()
-
+        actions.pack(pady=(10, 22))
+        self._make_button(actions, "CLOSE", self._on_close, primary=True).pack(anchor="center")
 
 if __name__ == "__main__":
     if sys.platform != "linux":
         print("This tool is Linux-only.")
         sys.exit(1)
 
-    App().mainloop()
+    if len(sys.argv) > 2:
+        print("Usage:")
+        print("  python3 rc_controller_channel_function_mapping.py")
+        print("  python3 rc_controller_channel_function_mapping.py /dev/input/js0")
+        sys.exit(1)
+
+    device = sys.argv[1] if len(sys.argv) > 1 else None
+    App(device).mainloop()

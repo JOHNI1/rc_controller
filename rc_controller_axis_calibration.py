@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-RC controller calibration tool.
+RC controller axis calibration tool.
+Usage example:
+    python3 rc_controller_axis_calibration.py
+    python3 rc_controller_axis_calibration.py /dev/input/js0
 
 Behavior:
 1) Calibrates roll / pitch / throttle / yaw first.
