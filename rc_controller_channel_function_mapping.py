@@ -29,7 +29,8 @@ from pathlib import Path
 from tkinter import messagebox
 from typing import Dict, List, Optional, Tuple
 
-OUTPUT_FILE = "rc_controller_channel_function_mapping.yaml"
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_FILE = BASE_DIR / "rc_controller_channel_function_mapping.yaml"
 
 JS_EVENT_BUTTON = 0x01
 JS_EVENT_AXIS = 0x02

@@ -158,6 +158,8 @@ def index_calibration_axes(calibration: dict) -> Dict[int, dict]:
             continue
         axis_number = entry.get("axis_number")
         if isinstance(axis_number, int):
+            if axis_number in out:
+                raise ValueError(f"Duplicate calibration axis_number: {axis_number}")
             out[axis_number] = entry
     return out
 
@@ -401,8 +403,9 @@ def resolve_channel_value(channel: dict, axes: Dict[int, int], buttons: Dict[int
 
     if input_type == "axis":
         axis_number = int(channel["axis_number"])
-        joystick_value = int(axes.get(axis_number, 0))
         calib = channel["calibration"]
+        neutral = int(calib.get("raw_center", calib.get("raw_min", 0)))
+        joystick_value = int(axes.get(axis_number, neutral))
         rc_min = int(channel["rc_min"])
         rc_max = int(channel["rc_max"])
         return apply_axis_mapping(joystick_value, calib, rc_min, rc_max)
