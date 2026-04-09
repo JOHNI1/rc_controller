@@ -70,21 +70,21 @@ def pack_crsf_channels(channels: List[int]) -> bytearray:
     return payload
 
 
+def build_crsf_rc_frame(channels: List[int]) -> bytearray:
+    device_addr = 0xEE   # TX module address
+    type_byte = 0x16     # RC_CHANNELS_PACKED
+
+    payload = pack_crsf_channels(channels)
+    length = 1 + len(payload) + 1  # type + payload + crc
+
+    frame = bytearray([device_addr, length, type_byte]) + payload
+    frame.append(crc8_dvb_s2(frame[2:]))  # CRC over type+payload
+    return frame
+
+
 def channel_to_crsf_raw(value_us: int) -> int:
     raw = ((value_us - 1500) * 8) // 5 + 992
     return clamp_int(raw, 192, 1792)
-
-
-def channel_to_crsf_raw(value_us: int) -> int:
-    if value_us <= 1000:
-        return CRSF_RAW_MIN
-    if value_us >= 2000:
-        return CRSF_RAW_MAX
-
-    span_in = 1000.0
-    span_out = float(CRSF_RAW_MAX - CRSF_RAW_MIN)
-    raw = CRSF_RAW_MIN + (float(value_us - 1000) / span_in) * span_out
-    return clamp_int(raw, CRSF_RAW_MIN, CRSF_RAW_MAX)
 
 
 def parse_args() -> argparse.Namespace:
