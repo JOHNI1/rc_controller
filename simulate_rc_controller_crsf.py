@@ -83,15 +83,8 @@ def build_crsf_rc_frame(channels: List[int]) -> bytearray:
 
 
 def channel_to_crsf_raw(value_us: int) -> int:
-    if value_us <= 1000:
-        return CRSF_RAW_MIN
-    if value_us >= 2000:
-        return CRSF_RAW_MAX
-
-    span_in = 1000.0
-    span_out = float(CRSF_RAW_MAX - CRSF_RAW_MIN)
-    raw = CRSF_RAW_MIN + (float(value_us - 1000) / span_in) * span_out
-    return clamp_int(raw, CRSF_RAW_MIN, CRSF_RAW_MAX)
+    raw = ((value_us - 1500) * 8 / 5) + 992
+    return clamp_int(raw, 192, 1792)
 
 
 def parse_args() -> argparse.Namespace:
