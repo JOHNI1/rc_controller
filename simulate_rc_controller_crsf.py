@@ -71,14 +71,14 @@ def pack_crsf_channels(channels: List[int]) -> bytearray:
 
 
 def build_crsf_rc_frame(channels: List[int]) -> bytearray:
-    device_addr = 0xEE   # TX module address
-    type_byte = 0x16     # RC_CHANNELS_PACKED
+    sync_byte = 0xC8
+    type_byte = 0x16
 
     payload = pack_crsf_channels(channels)
-    length = 1 + len(payload) + 1  # type + payload + crc
+    length = 1 + len(payload) + 1
 
-    frame = bytearray([device_addr, length, type_byte]) + payload
-    frame.append(crc8_dvb_s2(frame[2:]))  # CRC over type+payload
+    frame = bytearray([sync_byte, length, type_byte]) + payload
+    frame.append(crc8_dvb_s2(frame[2:]))
     return frame
 
 
