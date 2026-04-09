@@ -83,7 +83,7 @@ def build_crsf_rc_frame(channels: List[int]) -> bytearray:
 
 
 def channel_to_crsf_raw(value_us: int) -> int:
-    raw = ((value_us - 1500) * 8 / 5) + 992
+    raw = ((value_us - 1500) * 8) // 5 + 992
     return clamp_int(raw, 192, 1792)
 
 
