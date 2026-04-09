@@ -27,7 +27,7 @@ except ImportError:
 
 from simulate_rc_controller import RcJoystickController
 
-DEFAULT_BAUD = 416666
+DEFAULT_BAUD = 420000
 DEFAULT_RATE_HZ = 50
 CRSF_CHANNEL_COUNT_LIMIT = 16
 CRSF_RAW_MIN = 172
@@ -83,15 +83,8 @@ def build_crsf_rc_frame(channels: List[int]) -> bytearray:
 
 
 def channel_to_crsf_raw(value_us: int) -> int:
-    if value_us <= 1000:
-        return CRSF_RAW_MIN
-    if value_us >= 2000:
-        return CRSF_RAW_MAX
-
-    span_in = 1000.0
-    span_out = float(CRSF_RAW_MAX - CRSF_RAW_MIN)
-    raw = CRSF_RAW_MIN + (float(value_us - 1000) / span_in) * span_out
-    return clamp_int(raw, CRSF_RAW_MIN, CRSF_RAW_MAX)
+    raw = ((value_us - 1500) * 8) // 5 + 992
+    return clamp_int(raw, 192, 1792)
 
 
 def parse_args() -> argparse.Namespace:
@@ -141,9 +134,13 @@ def main() -> None:
                 ser.write(build_crsf_rc_frame(crsf_raw_values))
 
                 now = time.monotonic()
+                frame = build_crsf_rc_frame(crsf_raw_values)
+                ser.write(frame)
+
                 if now - last_print >= 1.0:
                     pretty = ", ".join(f"ch{i+1}={value}" for i, value in enumerate(rc_us_values))
                     print(pretty)
+                    print("frame:", frame.hex())
                     last_print = now
 
                 elapsed = time.monotonic() - loop_start
