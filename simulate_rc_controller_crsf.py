@@ -27,7 +27,7 @@ except ImportError:
 
 from simulate_rc_controller import RcJoystickController
 
-DEFAULT_BAUD = 420000
+DEFAULT_BAUD = 416666
 DEFAULT_RATE_HZ = 50
 CRSF_CHANNEL_COUNT_LIMIT = 16
 CRSF_RAW_MIN = 172
